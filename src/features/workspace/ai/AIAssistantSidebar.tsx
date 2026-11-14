@@ -249,6 +249,9 @@ export const AIAssistantSidebar: React.FC = () => {
           });
           if (res?.saved) {
             console.log(`[Save] File saved via Electron IPC → ${res.destPath}`);
+            if (res.destPath) {
+              useWorkspaceStore.getState().setActiveFilePath(res.destPath);
+            }
           } else if (res?.error) {
             console.error('[Save] Electron IPC save error:', res.error);
           }

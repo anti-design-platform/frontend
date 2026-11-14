@@ -77,6 +77,9 @@ export const ExportDialog: React.FC = () => {
         });
         if (res?.saved) {
           setExportSuccess(`✅ Saved to: ${res.destPath}`);
+          if (res.destPath) {
+            useWorkspaceStore.getState().setActiveFilePath(res.destPath);
+          }
           setTimeout(() => { setExportModalOpen(false); }, 2000);
           return;
         } else if (res?.error) {

@@ -714,26 +714,114 @@ function registerIPCHandlers() {
   ipcMain.handle('app:getBackendStatus', () => backendStatus);
 
   ipcMain.handle('app:openExternalCad', async (_event, { cadExecutablePath, filePath }) => {
-    if (!filePath || !fs.existsSync(filePath)) {
+    if (!filePath) {
+      return { success: false, error: 'No file path provided.' };
+    }
+
+    let localTarget = filePath;
+
+    // If filePath does not exist locally (e.g. cloud server path like /opt/backend/... or relative path)
+    if (!fs.existsSync(localTarget)) {
+      const projectRoot = getProjectRoot();
+      const candidates = [
+        path.resolve(localTarget),
+        path.join(projectRoot, localTarget),
+        path.join(projectRoot, 'backend', localTarget),
+        path.join(projectRoot, 'backend', 'storage', 'outputs', path.basename(localTarget)),
+        path.join(projectRoot, 'storage', 'outputs', path.basename(localTarget)),
+        path.join(getStorageRoot(), 'outputs', path.basename(localTarget)),
+      ];
+
+      for (const cand of candidates) {
+        if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+          localTarget = cand;
+          break;
+        }
+      }
+
+      // If still not found locally on disk, download it to the local cache/temp folder automatically
+      if (!fs.existsSync(localTarget)) {
+        const backendOrigin = (process.env.VITE_API_ORIGIN || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+        let targetDownloadUrl = null;
+
+        if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+          targetDownloadUrl = filePath;
+        } else {
+          const clean = filePath.replace(/\\/g, '/').replace(/^\/+/, '');
+          if (clean.includes('storage/outputs/')) {
+            const rel = clean.split('storage/outputs/')[1];
+            targetDownloadUrl = `${backendOrigin}/static/outputs/${rel}`;
+          } else if (clean.includes('outputs/')) {
+            const rel = clean.split('outputs/')[1];
+            targetDownloadUrl = `${backendOrigin}/static/outputs/${rel}`;
+          } else {
+            targetDownloadUrl = `${backendOrigin}/api/v1/files/download?file_path=${encodeURIComponent(filePath)}`;
+          }
+        }
+
+        if (targetDownloadUrl) {
+          const tempFolder = path.join(getStorageRoot(), 'temp');
+          fs.mkdirSync(tempFolder, { recursive: true });
+          const downloadedFileName = path.basename(filePath) || 'design.dxf';
+          const cachedLocalPath = path.join(tempFolder, downloadedFileName);
+
+          desktopLog('cad', 'INFO', `Downloading remote CAD file before opening: ${targetDownloadUrl} -> ${cachedLocalPath}`);
+          const downloadSuccess = await new Promise((resolve) => {
+            const client = targetDownloadUrl.startsWith('https') ? https : http;
+            const fileStream = fs.createWriteStream(cachedLocalPath);
+            const req = client.get(targetDownloadUrl, (res) => {
+              if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                res.pipe(fileStream);
+                fileStream.on('finish', () => {
+                  fileStream.close(() => resolve(true));
+                });
+              } else {
+                fileStream.close();
+                fs.unlink(cachedLocalPath, () => {});
+                resolve(false);
+              }
+            });
+            req.on('error', () => {
+              fileStream.close();
+              fs.unlink(cachedLocalPath, () => {});
+              resolve(false);
+            });
+            req.setTimeout(30000, () => {
+              req.destroy();
+              fileStream.close();
+              fs.unlink(cachedLocalPath, () => {});
+              resolve(false);
+            });
+          });
+
+          if (downloadSuccess && fs.existsSync(cachedLocalPath)) {
+            localTarget = cachedLocalPath;
+          }
+        }
+      }
+    }
+
+    if (!fs.existsSync(localTarget)) {
       return { success: false, error: `File path does not exist on disk: ${filePath}` };
     }
+
     try {
       const trimmedCadPath = (cadExecutablePath || '').trim();
       if (trimmedCadPath && fs.existsSync(trimmedCadPath)) {
         if (trimmedCadPath.toLowerCase().endsWith('.lnk')) {
           // Launch Windows shortcut passing the file path argument via cmd /c start ""
-          spawn('cmd.exe', ['/c', 'start', '""', trimmedCadPath, filePath], { detached: true, stdio: 'ignore' }).unref();
-          return { success: true, method: 'shortcut_lnk' };
+          spawn('cmd.exe', ['/c', 'start', '""', trimmedCadPath, localTarget], { detached: true, stdio: 'ignore' }).unref();
+          return { success: true, method: 'shortcut_lnk', localPath: localTarget };
         } else {
-          spawn(trimmedCadPath, [filePath], { detached: true, stdio: 'ignore' }).unref();
-          return { success: true, method: 'custom_exe' };
+          spawn(trimmedCadPath, [localTarget], { detached: true, stdio: 'ignore' }).unref();
+          return { success: true, method: 'custom_exe', localPath: localTarget };
         }
       } else {
-        const errorMsg = await shell.openPath(filePath);
+        const errorMsg = await shell.openPath(localTarget);
         if (errorMsg) {
           return { success: false, error: errorMsg };
         }
-        return { success: true, method: 'shell_default' };
+        return { success: true, method: 'shell_default', localPath: localTarget };
       }
     } catch (err) {
       return { success: false, error: err.message };

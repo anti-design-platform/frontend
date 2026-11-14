@@ -119,6 +119,7 @@ interface WorkspaceState {
   setNewProjectModalOpen: (open: boolean) => void;
   setAuthModalOpen: (open: boolean) => void;
   setVersionHistoryModalOpen: (open: boolean) => void;
+  setActiveFilePath: (path: string | null) => void;
 }
 
 const defaultTree: TreeNode[] = [
@@ -360,5 +361,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setNewProjectModalOpen: (isNewProjectModalOpen) => set({ isNewProjectModalOpen }),
   setAuthModalOpen: (isAuthModalOpen) => set({ isAuthModalOpen }),
   setVersionHistoryModalOpen: (isVersionHistoryModalOpen) => set({ isVersionHistoryModalOpen }),
+  setActiveFilePath: (activeFilePath) => set({ activeFilePath }),
 }));
 

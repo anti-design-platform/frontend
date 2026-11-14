@@ -122,6 +122,11 @@ export const DesktopHeader: React.FC = () => {
         });
         if (res?.saved) {
           alert(`✅ Successfully saved to: ${res.destPath}`);
+          if (res.destPath) {
+            useWorkspaceStore.getState().setActiveFilePath(res.destPath);
+            if (is3D) s3d.setActiveFile(res.destPath);
+            else s2d.setActiveFile(res.destPath);
+          }
           if (store.saveWorkspace) await store.saveWorkspace();
           return;
         } else if (res?.error) {
@@ -161,26 +166,38 @@ export const DesktopHeader: React.FC = () => {
   };
 
   const handleOpenCad = async () => {
-    let activeFilePath = store.activeFilePath;
+    const wsStore = useWorkspaceStore.getState();
+    const s2d = use2DWorkspaceStore.getState();
+    const s3d = use3DWorkspaceStore.getState();
+
+    let activeFilePath =
+      store.activeFilePath ||
+      wsStore.activeFilePath ||
+      (is3D ? s3d.activeFilePath : s2d.activeFilePath);
+
+    if (!activeFilePath && is3D && s3d.parts && s3d.parts.length > 0) {
+      const realPart = s3d.parts.find((p) => p.filePath);
+      if (realPart) {
+        activeFilePath = realPart.filePath;
+      }
+    }
+
     if (!activeFilePath) {
       alert('⚠️ No active CAD file is loaded in the workspace yet. Please generate or import a file first.');
       return;
     }
 
-    // Convert relative storage/outputs path to absolute local disk path if needed
-    if (!activeFilePath.includes(':') && !activeFilePath.startsWith('/')) {
-      // Normalize slashes
-      const cleanRelative = activeFilePath.replace(/\\/g, '/');
-      activeFilePath = `d:/download/cnc_design_genrator/${cleanRelative}`;
-    }
-
     const { cadExecutablePath } = useSettingsStore.getState();
-
     const api = (window as any).electronAPI || (window as any).electron;
     if (api?.openExternalCad) {
       const res = await api.openExternalCad(cadExecutablePath, activeFilePath);
       if (!res.success) {
         alert(`❌ Failed to open CAD application: ${res.error}`);
+      } else if (res.localPath && res.localPath !== activeFilePath) {
+        // Update store with the downloaded local path so future saves/opens use it
+        useWorkspaceStore.getState().setActiveFilePath(res.localPath);
+        if (is3D) s3d.setActiveFile(res.localPath);
+        else s2d.setActiveFile(res.localPath);
       }
     } else {
       alert('⚠️ Opening CAD application is only supported in the Desktop Electron application.');
